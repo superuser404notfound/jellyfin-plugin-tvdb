@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TVDB Community Fix - Jellyfin plugin catalog</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1.5rem; line-height: 1.5; color: #222; }
+code { background: #f3f3f3; padding: .1rem .35rem; border-radius: 3px; }
+pre { background: #f3f3f3; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+h1 { margin-bottom: .25rem; }
+.muted { color: #666; }
+</style>
+</head>
+<body>
+<h1>TVDB Community Fix</h1>
+<p class="muted">A patched fork of the official Jellyfin TVDB plugin.</p>
+
+<h2>What this fixes</h2>
+<p>The upstream TVDB v4 API returns an empty episode array for the <code>altdvd</code> and <code>alttwo</code> season types (see <a href="https://github.com/thetvdb/v4-api/issues/340">thetvdb/v4-api#340</a>, open since late 2023). This plugin falls back to per-season fetches when the primary endpoint comes back empty.</p>
+
+<h2>Install</h2>
+<ol>
+<li>Open Jellyfin: Dashboard, Plugins, Repositories, plus button.</li>
+<li>Name: <code>TVDB Community Fix</code></li>
+<li>URL: <code>https://superuser404notfound.github.io/jellyfin-plugin-tvdb/manifest.json</code></li>
+<li>Save, then go to the Catalog tab and install <em>TVDB Community Fix</em>.</li>
+<li>Uninstall the official <em>TheTVDB</em> plugin and restart Jellyfin.</li>
+</ol>
+
+<h2>Source</h2>
+<p><a href="https://github.com/superuser404notfound/jellyfin-plugin-tvdb">github.com/superuser404notfound/jellyfin-plugin-tvdb</a></p>
+</body>
+</html>

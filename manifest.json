@@ -1,0 +1,21 @@
+[
+  {
+    "guid": "721dc021-4ae6-45bf-82da-f4b89aef2f30",
+    "name": "TVDB Community Fix",
+    "description": "Drop-in replacement for the official TheTVDB plugin that adds a workaround for the upstream TVDB v4 API bug where /series/{id}/episodes/altdvd and /alttwo return an empty episodes array. When the primary endpoint comes back empty, the plugin falls back to walking the extended series record and aggregating episodes per matching season. References: jellyfin/jellyfin-plugin-tvdb#226, thetvdb/v4-api#340.",
+    "overview": "TheTVDB metadata with the altdvd / alttwo workaround applied",
+    "owner": "superuser404notfound",
+    "category": "Metadata",
+    "imageUrl": "https://repo.jellyfin.org/releases/plugin/images/jellyfin-plugin-tvdb.png",
+    "versions": [
+      {
+        "version": "22.1.0.0",
+        "changelog": "Workaround for upstream TVDB API bug affecting altdvd / alttwo season types (#226, thetvdb/v4-api#340).",
+        "targetAbi": "10.11.8.0",
+        "sourceUrl": "https://github.com/superuser404notfound/jellyfin-plugin-tvdb/releases/download/v22.1.0.0/tvdb-community-fix-22.1.0.0.zip",
+        "checksum": "0f4ac58161601f3f2e74621314439a60",
+        "timestamp": "2026-05-11T12:14:56Z"
+      }
+    ]
+  }
+]
