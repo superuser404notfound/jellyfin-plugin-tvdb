@@ -50,10 +50,10 @@ namespace Jellyfin.Plugin.Tvdb
         public static TvdbPlugin? Instance { get; private set; }
 
         /// <inheritdoc />
-        public override string Name => "TheTVDB";
+        public override string Name => "TVDB Community Fix";
 
         /// <inheritdoc />
-        public override Guid Id => new Guid("a677c0da-fac5-4cde-941a-7134223f14c8");
+        public override Guid Id => new Guid("721dc021-4ae6-45bf-82da-f4b89aef2f30");
 
         /// <inheritdoc />
         public IEnumerable<PluginPageInfo> GetPages()

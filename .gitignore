@@ -330,3 +330,7 @@ ASALocalRun/
 .mfractor/
 artifacts
 .idea
+
+# Local build artifacts
+/artifact/
+/tvdb-community-fix-*.zip

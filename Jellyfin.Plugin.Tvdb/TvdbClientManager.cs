@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Globalization;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Tvdb.Sdk;
 
 using Action = Tvdb.Sdk.Action;
@@ -34,6 +35,7 @@ public class TvdbClientManager : IDisposable
     private readonly IServiceProvider _serviceProvider;
     private readonly MemoryCache _memoryCache;
     private readonly SdkClientSettings _sdkClientSettings;
+    private readonly ILogger<TvdbClientManager> _logger;
 
     private DateTime _tokenUpdatedAt;
 
@@ -42,8 +44,10 @@ public class TvdbClientManager : IDisposable
     /// </summary>
     /// <param name="applicationHost">Instance of the <see cref="IApplicationHost"/> interface.</param>
     /// <param name="localizationManager">Instance of the <see cref="ILocalizationManager"/> interface.</param>
-    public TvdbClientManager(IApplicationHost applicationHost, ILocalizationManager localizationManager)
+    /// <param name="logger">Instance of the <see cref="ILogger{TvdbClientManager}"/> interface.</param>
+    public TvdbClientManager(IApplicationHost applicationHost, ILocalizationManager localizationManager, ILogger<TvdbClientManager> logger)
     {
+        _logger = logger;
         _serviceProvider = ConfigureService(applicationHost);
         _httpClientFactory = _serviceProvider.GetRequiredService<IHttpClientFactory>();
         _sdkClientSettings = _serviceProvider.GetRequiredService<SdkClientSettings>();
@@ -295,8 +299,85 @@ public class TvdbClientManager : IDisposable
         await LoginAsync().ConfigureAwait(false);
         var seriesResult = await seriesClient.GetSeriesEpisodesAsync(id: tvdbId, season_type: seasonType, cancellationToken: cancellationToken, page: 0)
             .ConfigureAwait(false);
-        _memoryCache.Set(key, seriesResult.Data, TimeSpan.FromHours(CacheDurationInHours));
-        return seriesResult.Data;
+        var data = seriesResult.Data;
+
+        // Workaround for https://github.com/thetvdb/v4-api/issues/340: the TVDB v4 API
+        // returns an empty episodes array for the "altdvd" and "alttwo" season types,
+        // even though the season records themselves exist. When the primary endpoint
+        // returns nothing, fall back to walking the extended series record's Seasons
+        // list and aggregating the episodes from each matching season.
+        if (data is not null && (data.Episodes is null || data.Episodes.Count == 0))
+        {
+            var aggregated = await TryAggregateEpisodesPerSeasonAsync(tvdbId, language, seasonType, cancellationToken).ConfigureAwait(false);
+            if (aggregated.Count > 0)
+            {
+                _logger.LogInformation("TvdbApiWorkaround: aggregated {Count} episodes for series {TvdbId} with season type '{SeasonType}' via per-season fallback.", aggregated.Count, tvdbId, seasonType);
+                data.Episodes = aggregated;
+            }
+        }
+
+        _memoryCache.Set(key, data, TimeSpan.FromHours(CacheDurationInHours));
+        return data!;
+    }
+
+    /// <summary>
+    /// Workaround for https://github.com/thetvdb/v4-api/issues/340. Fetches the extended
+    /// series record, filters the seasons by the requested type and pulls each matching
+    /// season's extended record to collect its episodes. Returns an empty list if the
+    /// series has no seasons of that type or the API calls fail.
+    /// </summary>
+    /// <param name="tvdbId">The series tvdb id.</param>
+    /// <param name="language">Metadata language.</param>
+    /// <param name="seasonType">Season type slug (e.g. <c>altdvd</c>, <c>alttwo</c>).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The aggregated episode list, in season-number order.</returns>
+    private async Task<IReadOnlyList<EpisodeBaseRecord>> TryAggregateEpisodesPerSeasonAsync(
+        int tvdbId,
+        string language,
+        string seasonType,
+        CancellationToken cancellationToken)
+    {
+        SeriesExtendedRecord? seriesExtended;
+        try
+        {
+            seriesExtended = await GetSeriesExtendedByIdAsync(tvdbId, language, cancellationToken, small: true).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TvdbApiWorkaround: failed to fetch extended series record for {TvdbId}.", tvdbId);
+            return Array.Empty<EpisodeBaseRecord>();
+        }
+
+        var matchingSeasons = seriesExtended?.Seasons?
+            .Where(s => s?.Type is not null
+                && string.Equals(s.Type.Type, seasonType, StringComparison.OrdinalIgnoreCase)
+                && s.Id.HasValue)
+            .OrderBy(s => s.Number ?? 0)
+            .ToList();
+
+        if (matchingSeasons is null || matchingSeasons.Count == 0)
+        {
+            return Array.Empty<EpisodeBaseRecord>();
+        }
+
+        var aggregated = new List<EpisodeBaseRecord>();
+        foreach (var season in matchingSeasons)
+        {
+            try
+            {
+                var seasonRecord = await GetSeasonByIdAsync(season.Id!.Value, language, cancellationToken).ConfigureAwait(false);
+                if (seasonRecord?.Episodes is not null && seasonRecord.Episodes.Count > 0)
+                {
+                    aggregated.AddRange(seasonRecord.Episodes);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "TvdbApiWorkaround: failed to fetch extended season {SeasonId} for series {TvdbId}.", season.Id, tvdbId);
+            }
+        }
+
+        return aggregated;
     }
 
     /// <summary>
