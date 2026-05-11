@@ -297,12 +297,12 @@ public class TvdbClientManager : IDisposable
 
         var seriesClient = _serviceProvider.GetRequiredService<ISeriesClient>();
         await LoginAsync().ConfigureAwait(false);
-        _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: requesting series {TvdbId} with seasonType '{SeasonType}' from upstream API.", tvdbId, seasonType);
+        _logger.LogDebug("TvdbApiWorkaround.GetSeriesEpisodesAsync: requesting series {TvdbId} with seasonType '{SeasonType}' from upstream API.", tvdbId, seasonType);
         var seriesResult = await seriesClient.GetSeriesEpisodesAsync(id: tvdbId, season_type: seasonType, cancellationToken: cancellationToken, page: 0)
             .ConfigureAwait(false);
         var data = seriesResult.Data;
         var primaryCount = data?.Episodes?.Count ?? 0;
-        _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: upstream returned {Count} episodes for series {TvdbId} seasonType '{SeasonType}'.", primaryCount, tvdbId, seasonType);
+        _logger.LogDebug("TvdbApiWorkaround.GetSeriesEpisodesAsync: upstream returned {Count} episodes for series {TvdbId} seasonType '{SeasonType}'.", primaryCount, tvdbId, seasonType);
 
         // Workaround for https://github.com/thetvdb/v4-api/issues/340: the TVDB v4 API
         // returns an empty episodes array for the "altdvd" and "alttwo" season types,
@@ -311,11 +311,10 @@ public class TvdbClientManager : IDisposable
         // list and aggregating the episodes from each matching season.
         if (data is not null && primaryCount == 0)
         {
-            _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: primary endpoint empty, starting per-season fallback for series {TvdbId} seasonType '{SeasonType}'.", tvdbId, seasonType);
             var aggregated = await TryAggregateEpisodesPerSeasonAsync(tvdbId, language, seasonType, cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: fallback aggregated {Count} episodes for series {TvdbId} seasonType '{SeasonType}'.", aggregated.Count, tvdbId, seasonType);
             if (aggregated.Count > 0)
             {
+                _logger.LogInformation("TvdbApiWorkaround: aggregated {Count} episodes for series {TvdbId} season type '{SeasonType}' via per-season fallback (upstream API bug thetvdb/v4-api#340).", aggregated.Count, tvdbId, seasonType);
                 data.Episodes = aggregated;
             }
         }
@@ -359,7 +358,7 @@ public class TvdbClientManager : IDisposable
             .Select(s => s.Type!.Type)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? new List<string>();
-        _logger.LogInformation("TvdbApiWorkaround.Aggregate: series {TvdbId} extended record has {Total} seasons, distinct type slugs: [{Slugs}]; filtering for '{Wanted}'.", tvdbId, allSeasonsCount, string.Join(", ", distinctTypeSlugs), seasonType);
+        _logger.LogDebug("TvdbApiWorkaround.Aggregate: series {TvdbId} extended record has {Total} seasons, distinct type slugs: [{Slugs}]; filtering for '{Wanted}'.", tvdbId, allSeasonsCount, string.Join(", ", distinctTypeSlugs), seasonType);
 
         var matchingSeasons = allSeasons?
             .Where(s => s?.Type is not null
@@ -374,7 +373,7 @@ public class TvdbClientManager : IDisposable
             return Array.Empty<EpisodeBaseRecord>();
         }
 
-        _logger.LogInformation("TvdbApiWorkaround.Aggregate: found {Count} season(s) of type '{Wanted}' for series {TvdbId}; ids=[{Ids}].", matchingSeasons.Count, seasonType, tvdbId, string.Join(", ", matchingSeasons.Select(s => s.Id!.Value)));
+        _logger.LogDebug("TvdbApiWorkaround.Aggregate: found {Count} season(s) of type '{Wanted}' for series {TvdbId}; ids=[{Ids}].", matchingSeasons.Count, seasonType, tvdbId, string.Join(", ", matchingSeasons.Select(s => s.Id!.Value)));
 
         var aggregated = new List<EpisodeBaseRecord>();
         foreach (var season in matchingSeasons)
@@ -383,21 +382,15 @@ public class TvdbClientManager : IDisposable
             {
                 var seasonRecord = await GetSeasonByIdAsync(season.Id!.Value, language, cancellationToken).ConfigureAwait(false);
                 var perSeasonCount = seasonRecord?.Episodes?.Count ?? 0;
-                _logger.LogInformation("TvdbApiWorkaround.Aggregate: season {SeasonId} (number {SeasonNumber}) returned {Count} episodes.", season.Id, season.Number, perSeasonCount);
+                _logger.LogDebug("TvdbApiWorkaround.Aggregate: season {SeasonId} (number {SeasonNumber}) returned {Count} episodes.", season.Id, season.Number, perSeasonCount);
                 if (seasonRecord?.Episodes is not null && seasonRecord.Episodes.Count > 0)
                 {
-                    // Verified empirically against the TVDB v4 API and the public web UI:
-                    // /seasons/{id}/extended already returns each episode's seasonNumber
-                    // and number in the alternate-order numbering (e.g. for altdvd, the
-                    // season type matches what the "Alternate DVD Order" tab shows on
-                    // thetvdb.com), so we trust those fields directly for SxE matching.
-                    // The array order itself is not the alternate-order position.
-                    if (seasonRecord.Episodes.Count > 0)
-                    {
-                        var sample = seasonRecord.Episodes.Take(3).Select(ep => $"S{ep.SeasonNumber}E{ep.Number} id={ep.Id} '{ep.Name}'");
-                        _logger.LogInformation("TvdbApiWorkaround.Aggregate: season {SeasonNum} first 3 episodes from API: [{Sample}].", season.Number, string.Join(" | ", sample));
-                    }
-
+                    // /seasons/{id}/extended returns each episode's seasonNumber and number
+                    // in the alternate-order numbering (verified against the TVDB v4 API
+                    // and the public web UI: the values match what the "Alternate DVD Order"
+                    // tab shows on thetvdb.com for the corresponding season type). The
+                    // array order itself is not the alternate-order position, but the
+                    // per-episode fields are correct for SxE matching downstream.
                     aggregated.AddRange(seasonRecord.Episodes);
                 }
             }
@@ -698,12 +691,11 @@ public class TvdbClientManager : IDisposable
         string language,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: invoked. SeriesDisplayOrder='{Order}' (null={IsNull}, len={Len}), ParentIndex={ParentIndex}, Index={Index}, Premiere={Premiere}, IsAutomated={IsAutomated}.", searchInfo.SeriesDisplayOrder, searchInfo.SeriesDisplayOrder is null, searchInfo.SeriesDisplayOrder?.Length ?? -1, searchInfo.ParentIndexNumber, searchInfo.IndexNumber, searchInfo.PremiereDate, searchInfo.IsAutomated);
+        _logger.LogDebug("TvdbApiWorkaround.GetEpisodeTvdbId: invoked. SeriesDisplayOrder='{Order}', ParentIndex={ParentIndex}, Index={Index}, Premiere={Premiere}, IsAutomated={IsAutomated}.", searchInfo.SeriesDisplayOrder, searchInfo.ParentIndexNumber, searchInfo.IndexNumber, searchInfo.PremiereDate, searchInfo.IsAutomated);
         var seriesClient = _serviceProvider.GetRequiredService<ISeriesClient>();
         await LoginAsync().ConfigureAwait(false);
         if (!searchInfo.SeriesProviderIds.TryGetValue(TvdbPlugin.ProviderId, out var seriesTvdbIdString))
         {
-            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: no TVDB id on searchInfo, bailing.");
             return null;
         }
 
@@ -755,14 +747,10 @@ public class TvdbClientManager : IDisposable
             key = $"FindTvdbEpisodeId_{seriesTvdbIdString}_{airDate}";
         }
 
-        _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: pre-cache. key={Key}, special={Special}, order={Order}.", key, special, searchInfo.SeriesDisplayOrder);
         if (key != null && _memoryCache.TryGetValue(key, out string? episodeTvdbId))
         {
-            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: cache HIT for key={Key}, value={Value}, returning early.", key, episodeTvdbId ?? "<null>");
             return episodeTvdbId;
         }
-
-        _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: cache MISS for key={Key}, proceeding.", key);
 
         // Workaround for https://github.com/thetvdb/v4-api/issues/340: the TVDB
         // filter-by-season/episode endpoint also returns empty results for the
@@ -773,9 +761,7 @@ public class TvdbClientManager : IDisposable
             && (string.Equals(searchInfo.SeriesDisplayOrder, "altdvd", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(searchInfo.SeriesDisplayOrder, "alttwo", StringComparison.OrdinalIgnoreCase)))
         {
-            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: entering altdvd/alttwo branch for series {Tvdb} order '{Order}' S{S}E{E}.", seriesTvdbId, searchInfo.SeriesDisplayOrder, seasonNumber, episodeNumber);
             var bulkData = await GetSeriesEpisodesAsync(seriesTvdbId, language, searchInfo.SeriesDisplayOrder!, cancellationToken).ConfigureAwait(false);
-            var availableCount = bulkData?.Episodes?.Count ?? 0;
             var match = bulkData?.Episodes?.FirstOrDefault(e =>
             {
                 if (seasonNumber.HasValue && episodeNumber.HasValue)
@@ -787,7 +773,7 @@ public class TvdbClientManager : IDisposable
             });
 
             var resolvedId = match?.Id?.ToString(CultureInfo.InvariantCulture);
-            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: bulk fetch produced {Avail} episodes; match for S{S}E{E} = {Resolved}.", availableCount, seasonNumber, episodeNumber, resolvedId ?? "<null>");
+            _logger.LogDebug("TvdbApiWorkaround.GetEpisodeTvdbId: altdvd/alttwo branch resolved series {Tvdb} S{S}E{E} -> {Resolved}.", seriesTvdbId, seasonNumber, episodeNumber, resolvedId ?? "<null>");
             if (key != null)
             {
                 _memoryCache.Set(key, resolvedId, TimeSpan.FromHours(CacheDurationInHours));

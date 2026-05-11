@@ -1,7 +1,7 @@
 name: "TVDB Community Fix"
 guid: "721dc021-4ae6-45bf-82da-f4b89aef2f30"
 imageUrl: "https://repo.jellyfin.org/releases/plugin/images/jellyfin-plugin-tvdb.png"
-version: 22.1.5.0
+version: 22.2.0.0
 targetAbi: "10.11.8.0"
 framework: "net9.0"
 owner: "superuser404notfound"
@@ -20,6 +20,7 @@ artifacts:
   - "Jellyfin.Plugin.Tvdb.dll"
   - "Tvdb.Sdk.dll"
 changelog: |-
+  - 22.2.0.0: production release. Demotes verbose diagnostic logs to Debug level; the workaround now logs a single Information line per series ('aggregated N episodes for series X season type Y via per-season fallback') so logs stay clean during normal operation. Functional behaviour unchanged from 22.1.5.0.
   - 22.1.5.0: REVERT the v22.1.4.0 override. Verified against the live TVDB API: /seasons/{id}/extended returns seasonNumber / number in the alternate-order numbering already, so the SxE matching can trust those fields directly. The array order itself is not meaningful. v22.1.4.0 was based on a wrong assumption and produced incorrect matches.
   - 22.1.4.0: rewrite the seasonNumber / number on aggregated episodes with the alternate season's own number and the in-season position, so SxE matching resolves to the right TVDB id instead of the aired-order coincidence match.
   - 22.1.3.0: log cache hits / misses in GetEpisodeTvdbId so we can see exactly where execution diverts.
