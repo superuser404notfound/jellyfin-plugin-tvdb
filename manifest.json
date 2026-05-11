@@ -9,6 +9,14 @@
     "imageUrl": "https://repo.jellyfin.org/releases/plugin/images/jellyfin-plugin-tvdb.png",
     "versions": [
       {
+        "version": "22.1.1.0",
+        "changelog": "Also route GetEpisodeTvdbId through the per-season fallback for altdvd / alttwo (fixes per-episode metadata lookups).",
+        "targetAbi": "10.11.8.0",
+        "sourceUrl": "https://github.com/superuser404notfound/jellyfin-plugin-tvdb/releases/download/v22.1.1.0/tvdb-community-fix-22.1.1.0.zip",
+        "checksum": "50f608b15050833e1bf376873765f962",
+        "timestamp": "2026-05-11T12:37:37Z"
+      },
+      {
         "version": "22.1.0.0",
         "changelog": "Workaround for upstream TVDB API bug affecting altdvd / alttwo season types (#226, thetvdb/v4-api#340).",
         "targetAbi": "10.11.8.0",
