@@ -386,23 +386,16 @@ public class TvdbClientManager : IDisposable
                 _logger.LogInformation("TvdbApiWorkaround.Aggregate: season {SeasonId} (number {SeasonNumber}) returned {Count} episodes.", season.Id, season.Number, perSeasonCount);
                 if (seasonRecord?.Episodes is not null && seasonRecord.Episodes.Count > 0)
                 {
-                    // Episode records returned from /seasons/{id}/extended carry the
-                    // canonical (aired-order) seasonNumber/number values, regardless of
-                    // which season type was queried. Overwrite them with the alternate
-                    // season's own number and the episode's position within that season
-                    // so that downstream matching by SxE resolves to the right TVDB id.
-                    var altSeasonNumber = (int)(season.Number ?? 0);
-                    int position = 1;
-                    foreach (var ep in seasonRecord.Episodes)
+                    // Verified empirically against the TVDB v4 API and the public web UI:
+                    // /seasons/{id}/extended already returns each episode's seasonNumber
+                    // and number in the alternate-order numbering (e.g. for altdvd, the
+                    // season type matches what the "Alternate DVD Order" tab shows on
+                    // thetvdb.com), so we trust those fields directly for SxE matching.
+                    // The array order itself is not the alternate-order position.
+                    if (seasonRecord.Episodes.Count > 0)
                     {
-                        if (position <= 3)
-                        {
-                            _logger.LogInformation("TvdbApiWorkaround.Aggregate: season {SeasonNum} ep#{Pos} api-canonical S{OrigS}E{OrigE} -> rewritten S{NewS}E{NewE} (id={Id}, name='{Name}').", altSeasonNumber, position, ep.SeasonNumber, ep.Number, altSeasonNumber, position, ep.Id, ep.Name);
-                        }
-
-                        ep.SeasonNumber = altSeasonNumber;
-                        ep.Number = position;
-                        position++;
+                        var sample = seasonRecord.Episodes.Take(3).Select(ep => $"S{ep.SeasonNumber}E{ep.Number} id={ep.Id} '{ep.Name}'");
+                        _logger.LogInformation("TvdbApiWorkaround.Aggregate: season {SeasonNum} first 3 episodes from API: [{Sample}].", season.Number, string.Join(" | ", sample));
                     }
 
                     aggregated.AddRange(seasonRecord.Episodes);
