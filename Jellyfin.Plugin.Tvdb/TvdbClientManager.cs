@@ -743,10 +743,14 @@ public class TvdbClientManager : IDisposable
             key = $"FindTvdbEpisodeId_{seriesTvdbIdString}_{airDate}";
         }
 
+        _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: pre-cache. key={Key}, special={Special}, order={Order}.", key, special, searchInfo.SeriesDisplayOrder);
         if (key != null && _memoryCache.TryGetValue(key, out string? episodeTvdbId))
         {
+            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: cache HIT for key={Key}, value={Value}, returning early.", key, episodeTvdbId ?? "<null>");
             return episodeTvdbId;
         }
+
+        _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: cache MISS for key={Key}, proceeding.", key);
 
         // Workaround for https://github.com/thetvdb/v4-api/issues/340: the TVDB
         // filter-by-season/episode endpoint also returns empty results for the
