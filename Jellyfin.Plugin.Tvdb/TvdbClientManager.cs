@@ -297,21 +297,25 @@ public class TvdbClientManager : IDisposable
 
         var seriesClient = _serviceProvider.GetRequiredService<ISeriesClient>();
         await LoginAsync().ConfigureAwait(false);
+        _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: requesting series {TvdbId} with seasonType '{SeasonType}' from upstream API.", tvdbId, seasonType);
         var seriesResult = await seriesClient.GetSeriesEpisodesAsync(id: tvdbId, season_type: seasonType, cancellationToken: cancellationToken, page: 0)
             .ConfigureAwait(false);
         var data = seriesResult.Data;
+        var primaryCount = data?.Episodes?.Count ?? 0;
+        _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: upstream returned {Count} episodes for series {TvdbId} seasonType '{SeasonType}'.", primaryCount, tvdbId, seasonType);
 
         // Workaround for https://github.com/thetvdb/v4-api/issues/340: the TVDB v4 API
         // returns an empty episodes array for the "altdvd" and "alttwo" season types,
         // even though the season records themselves exist. When the primary endpoint
         // returns nothing, fall back to walking the extended series record's Seasons
         // list and aggregating the episodes from each matching season.
-        if (data is not null && (data.Episodes is null || data.Episodes.Count == 0))
+        if (data is not null && primaryCount == 0)
         {
+            _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: primary endpoint empty, starting per-season fallback for series {TvdbId} seasonType '{SeasonType}'.", tvdbId, seasonType);
             var aggregated = await TryAggregateEpisodesPerSeasonAsync(tvdbId, language, seasonType, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("TvdbApiWorkaround.GetSeriesEpisodesAsync: fallback aggregated {Count} episodes for series {TvdbId} seasonType '{SeasonType}'.", aggregated.Count, tvdbId, seasonType);
             if (aggregated.Count > 0)
             {
-                _logger.LogInformation("TvdbApiWorkaround: aggregated {Count} episodes for series {TvdbId} with season type '{SeasonType}' via per-season fallback.", aggregated.Count, tvdbId, seasonType);
                 data.Episodes = aggregated;
             }
         }
@@ -348,7 +352,16 @@ public class TvdbClientManager : IDisposable
             return Array.Empty<EpisodeBaseRecord>();
         }
 
-        var matchingSeasons = seriesExtended?.Seasons?
+        var allSeasons = seriesExtended?.Seasons;
+        var allSeasonsCount = allSeasons?.Count ?? 0;
+        var distinctTypeSlugs = allSeasons?
+            .Where(s => s?.Type?.Type is not null)
+            .Select(s => s.Type!.Type)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? new List<string>();
+        _logger.LogInformation("TvdbApiWorkaround.Aggregate: series {TvdbId} extended record has {Total} seasons, distinct type slugs: [{Slugs}]; filtering for '{Wanted}'.", tvdbId, allSeasonsCount, string.Join(", ", distinctTypeSlugs), seasonType);
+
+        var matchingSeasons = allSeasons?
             .Where(s => s?.Type is not null
                 && string.Equals(s.Type.Type, seasonType, StringComparison.OrdinalIgnoreCase)
                 && s.Id.HasValue)
@@ -357,8 +370,11 @@ public class TvdbClientManager : IDisposable
 
         if (matchingSeasons is null || matchingSeasons.Count == 0)
         {
+            _logger.LogWarning("TvdbApiWorkaround.Aggregate: no seasons of type '{Wanted}' found for series {TvdbId}; returning empty list.", seasonType, tvdbId);
             return Array.Empty<EpisodeBaseRecord>();
         }
+
+        _logger.LogInformation("TvdbApiWorkaround.Aggregate: found {Count} season(s) of type '{Wanted}' for series {TvdbId}; ids=[{Ids}].", matchingSeasons.Count, seasonType, tvdbId, string.Join(", ", matchingSeasons.Select(s => s.Id!.Value)));
 
         var aggregated = new List<EpisodeBaseRecord>();
         foreach (var season in matchingSeasons)
@@ -366,6 +382,8 @@ public class TvdbClientManager : IDisposable
             try
             {
                 var seasonRecord = await GetSeasonByIdAsync(season.Id!.Value, language, cancellationToken).ConfigureAwait(false);
+                var perSeasonCount = seasonRecord?.Episodes?.Count ?? 0;
+                _logger.LogInformation("TvdbApiWorkaround.Aggregate: season {SeasonId} (number {SeasonNumber}) returned {Count} episodes.", season.Id, season.Number, perSeasonCount);
                 if (seasonRecord?.Episodes is not null && seasonRecord.Episodes.Count > 0)
                 {
                     aggregated.AddRange(seasonRecord.Episodes);
@@ -668,10 +686,12 @@ public class TvdbClientManager : IDisposable
         string language,
         CancellationToken cancellationToken)
     {
+        _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: invoked. SeriesDisplayOrder='{Order}' (null={IsNull}, len={Len}), ParentIndex={ParentIndex}, Index={Index}, Premiere={Premiere}, IsAutomated={IsAutomated}.", searchInfo.SeriesDisplayOrder, searchInfo.SeriesDisplayOrder is null, searchInfo.SeriesDisplayOrder?.Length ?? -1, searchInfo.ParentIndexNumber, searchInfo.IndexNumber, searchInfo.PremiereDate, searchInfo.IsAutomated);
         var seriesClient = _serviceProvider.GetRequiredService<ISeriesClient>();
         await LoginAsync().ConfigureAwait(false);
         if (!searchInfo.SeriesProviderIds.TryGetValue(TvdbPlugin.ProviderId, out var seriesTvdbIdString))
         {
+            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: no TVDB id on searchInfo, bailing.");
             return null;
         }
 
@@ -737,7 +757,9 @@ public class TvdbClientManager : IDisposable
             && (string.Equals(searchInfo.SeriesDisplayOrder, "altdvd", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(searchInfo.SeriesDisplayOrder, "alttwo", StringComparison.OrdinalIgnoreCase)))
         {
+            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: entering altdvd/alttwo branch for series {Tvdb} order '{Order}' S{S}E{E}.", seriesTvdbId, searchInfo.SeriesDisplayOrder, seasonNumber, episodeNumber);
             var bulkData = await GetSeriesEpisodesAsync(seriesTvdbId, language, searchInfo.SeriesDisplayOrder!, cancellationToken).ConfigureAwait(false);
+            var availableCount = bulkData?.Episodes?.Count ?? 0;
             var match = bulkData?.Episodes?.FirstOrDefault(e =>
             {
                 if (seasonNumber.HasValue && episodeNumber.HasValue)
@@ -749,6 +771,7 @@ public class TvdbClientManager : IDisposable
             });
 
             var resolvedId = match?.Id?.ToString(CultureInfo.InvariantCulture);
+            _logger.LogInformation("TvdbApiWorkaround.GetEpisodeTvdbId: bulk fetch produced {Avail} episodes; match for S{S}E{E} = {Resolved}.", availableCount, seasonNumber, episodeNumber, resolvedId ?? "<null>");
             if (key != null)
             {
                 _memoryCache.Set(key, resolvedId, TimeSpan.FromHours(CacheDurationInHours));
