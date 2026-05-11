@@ -728,6 +728,35 @@ public class TvdbClientManager : IDisposable
             return episodeTvdbId;
         }
 
+        // Workaround for https://github.com/thetvdb/v4-api/issues/340: the TVDB
+        // filter-by-season/episode endpoint also returns empty results for the
+        // altdvd and alttwo season types, not just the unfiltered bulk endpoint.
+        // For those season types, route through GetSeriesEpisodesAsync (which
+        // applies the per-season fallback) and resolve the match locally.
+        if (!special
+            && (string.Equals(searchInfo.SeriesDisplayOrder, "altdvd", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(searchInfo.SeriesDisplayOrder, "alttwo", StringComparison.OrdinalIgnoreCase)))
+        {
+            var bulkData = await GetSeriesEpisodesAsync(seriesTvdbId, language, searchInfo.SeriesDisplayOrder!, cancellationToken).ConfigureAwait(false);
+            var match = bulkData?.Episodes?.FirstOrDefault(e =>
+            {
+                if (seasonNumber.HasValue && episodeNumber.HasValue)
+                {
+                    return e.SeasonNumber == seasonNumber.Value && e.Number == episodeNumber.Value;
+                }
+
+                return !string.IsNullOrEmpty(airDate) && string.Equals(e.Aired, airDate, StringComparison.OrdinalIgnoreCase);
+            });
+
+            var resolvedId = match?.Id?.ToString(CultureInfo.InvariantCulture);
+            if (key != null)
+            {
+                _memoryCache.Set(key, resolvedId, TimeSpan.FromHours(CacheDurationInHours));
+            }
+
+            return resolvedId;
+        }
+
         Response56 seriesResponse;
         if (!special)
         {
